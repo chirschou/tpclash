@@ -3,16 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/spf13/cobra"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
-
-	_ "github.com/mritd/logrus"
-	"github.com/sirupsen/logrus"
-	"github.com/spf13/cobra"
 )
 
 var (
@@ -37,10 +35,11 @@ var rootCmd = &cobra.Command{
 		}
 
 		if conf.Debug {
-			logrus.SetLevel(logrus.DebugLevel)
+			h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+			slog.SetDefault(slog.New(h))
 		}
 
-		logrus.Info("[main] starting tpclash...")
+		slog.Info("[main] starting tpclash...")
 
 		// Initialize signal control Context
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
@@ -61,13 +60,13 @@ var rootCmd = &cobra.Command{
 		// Check clash config
 		cc, err := CheckConfig(clashConfStr)
 		if err != nil {
-			logrus.Fatal(err)
+			slog.Error("", err)
 		}
 
 		// Copy remote or local clash config file to internal path
 		clashConfPath := filepath.Join(conf.ClashHome, InternalConfigName)
 		if err = os.WriteFile(clashConfPath, []byte(clashConfStr), 0644); err != nil {
-			logrus.Fatalf("[main] failed to copy clash config: %v", err)
+			slog.Error("[main] failed to copy clash config: %v", err)
 		}
 
 		// Create child process
@@ -76,30 +75,28 @@ var rootCmd = &cobra.Command{
 		cmd := exec.Command(clashBinPath, "-f", clashConfPath, "-d", conf.ClashHome, "-ext-ui", clashUIPath)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			AmbientCaps: []uintptr{CAP_NET_BIND_SERVICE, CAP_NET_ADMIN, CAP_NET_RAW},
-		}
-		logrus.Infof("[main] running cmds: %v", cmd.Args)
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+		slog.Info("[main] running cmds: %v", cmd.Args)
 
 		if err = cmd.Start(); err != nil {
-			logrus.Fatalf("[main] failed to start clash process: %v: %v", err, cmd.Args)
+			slog.Error("[main] failed to start clash process: %v: %v", err, cmd.Args)
 			cancel()
 		}
 		if cmd.Process == nil {
-			logrus.Fatalf("[main] failed to start clash process: %v", cmd.Args)
+			slog.Error("[main] failed to start clash process: %v", cmd.Args)
 			cancel()
 		}
 
 		if err = EnableDockerCompatible(); err != nil {
-			logrus.Errorf("[main] failed enable docker compatible: %v", err)
+			slog.Error("[main] failed enable docker compatible: %v", err)
 		}
 
 		// Watch clash config changes, and automatically reload the config
 		go AutoReload(updateCh, clashConfPath)
 
-		logrus.Info("[main] 🍄 提莫队长正在待命...")
+		slog.Info("[main] 🍄 提莫队长正在待命...")
 		if conf.Test {
-			logrus.Warn("[main] test mode enabled, tpclash will automatically exit after 5 minutes...")
+			slog.Warn("[main] test mode enabled, tpclash will automatically exit after 5 minutes...")
 			go func() {
 				<-time.After(5 * time.Minute)
 				cancel()
@@ -107,40 +104,40 @@ var rootCmd = &cobra.Command{
 		}
 
 		if conf.EnableTracing {
-			logrus.Infof("[main] 🔪 永远不要忘记, 吾等为何而战...")
+			slog.Info("[main] 🔪 永远不要忘记, 吾等为何而战...")
 			// always clean tracing containers
 			if err = stopTracing(ctx); err != nil {
-				logrus.Errorf("[main] ❌ tracing project cleanup failed: %v", err)
+				slog.Error("[main] ❌ tracing project cleanup failed: %v", err)
 			}
 			if err = startTracing(ctx, conf, cc); err != nil {
-				logrus.Errorf("[main] ❌ tracing project deploy failed: %v", err)
+				slog.Error("[main] ❌ tracing project deploy failed: %v", err)
 			}
 		}
 
 		<-ctx.Done()
-		logrus.Info("[main] 🛑 TPClash 正在停止...")
+		slog.Info("[main] 🛑 TPClash 正在停止...")
 		if err = DisableDockerCompatible(); err != nil {
-			logrus.Errorf("[main] failed disable docker compatible: %v", err)
+			slog.Error("[main] failed disable docker compatible: %v", err)
 		}
 
 		if conf.EnableTracing {
-			logrus.Infof("[main] 🔪 恐惧, 是万敌之首...")
+			slog.Info("[main] 🔪 恐惧, 是万敌之首...")
 
 			tracingStopCtx, tracingStopCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer tracingStopCancel()
 
 			if err = stopTracing(tracingStopCtx); err != nil {
-				logrus.Errorf("[main] ❌ tracing project stop failed: %v", err)
+				slog.Error("[main] ❌ tracing project stop failed: %v", err)
 			}
 		}
 
 		if cmd.Process != nil {
 			if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
-				logrus.Error(err)
+				slog.Error("", err)
 			}
 		}
 
-		logrus.Info("[main] 🛑 TPClash 已关闭!")
+		slog.Info("[main] 🛑 TPClash 已关闭!")
 	},
 }
 
